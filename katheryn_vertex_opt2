@@ -1,0 +1,194 @@
+# EDITED TO IMPLEMENT VERTEX OPTIMIZATION
+### added
+import copy
+def hill_climbing_search(G, c, k):
+  vertexString = "0" * len(G.nodes)
+  edgeString = "0" * len(G.edges)
+  # t = list of 0s for each node and edge, and formatting at end for number of edges and nodes we can remove
+  t = vertexString + edgeString + format(c, '03d') + format(k, '03d')
+  memo = {}
+  end = list(G.nodes)[-1]
+  dmax = lambda x: shortest_path_length(x, 0, end, weight="weight")
+  D = G.copy()
+  D1 = G.copy()
+  D2 = G.copy()
+  G_edges = list(G.edges)
+  # ADDED
+  removed_edges = []
+  
+
+  # Remove edges and vertices from D, according to vstring
+  def construct_graph(D, G, vstring):
+    vstring = vstring[:-6] # remove parts at end specifying c and k. only have bits for vertices and edges
+    vertices = len(G.nodes)
+    for e in range(vertices, vertices + len(G_edges)): # remove edges from D if they're labeled with "1" in vstring
+      if vstring[e] == "1":  
+        # "*" allows remove_edge to unpack an edge from an edge tuple     
+        D.remove_edge(*G_edges[e - vertices])
+    for v in range(vertices): # remove nodes
+      if vstring[v] == "1":
+        D.remove_node(v)
+    return D
+
+  # Add all vertices and edges back to D, recreating G
+  def reconstruct_graph(D, G, vstring):
+    vstring = vstring[:-6] # remove parts at end specifying c and k. only have bits for vertices and edges
+    vertices = len(G.nodes)
+    attributes = nx.get_edge_attributes(G, "weight")
+    readded_v = []
+    # add any vertices labeled "1" in vstring back into D
+    for v in range(vertices):
+      if vstring[v] == "1":
+        D.add_node(v)
+        readded_v.append(v)
+    # for all re-added vertices, add back all the edges that were connected to them (in G) into D
+    for v in readded_v:
+      for e in G.edges(v):
+        edge = sorted(e)
+        if edge not in D.edges:
+          w = attributes[(edge[0], edge[1])]
+          D.add_edge(edge[0], edge[1], weight=w)
+    # add back edges labeled "1" in vstring, using info from G.
+    for e in range(vertices, vertices + len(G_edges)):
+      if vstring[e] == "1" and G_edges[e - vertices] not in D.edges:
+        w = attributes[G_edges[e - vertices]]
+        D.add_edge(*G_edges[e - vertices],  weight=w)
+    return D.edges
+
+  # find edges to remove. return modified tag_string
+  def helper(e, v, tag_string):
+    # tag_string starts as list of 0s for each node/edge + formatting for c and k
+    # "nonlocal" allows helper to modify D, D1, D2 for all instances within hill climbing
+    nonlocal D, D1, D2
+    ### ADDED
+    nonlocal removed_edges
+    # add another version of helper additional edge budget to keep track of last calculated edge budget
+    helper_additional_edge_budget = 0
+    ###
+    m = tag_string
+    # m_graph = a perfect copy of G if tag_string starts as a list of 0s
+    m_graph = construct_graph(D, G, m)
+    c = D2
+    # calculate net remaining edge budget
+    net_edge_budget = e + helper_additional_edge_budget
+    # test removing |e| edges (max number of edges we can remove)
+    while net_edge_budget > 0:
+      # index of current edge
+      i = 0
+      # ??? should this be all_shortest_paths?
+      path = shortest_path(m_graph, 0, end, weight="weight")
+      path_edges = [(path[i], path[i+1]) for i in range(len(path)-1)]
+      tag_string = m
+      # add dummy element into removed_edges
+      removed_edges.append(-1)
+      # test removing each edge in path_edges. first loop is for index of edge
+      for edge in G.edges:
+        if edge in path_edges:
+          # m = an edited tag_string to put a "1" for edge, so construct_graph will remove that edge when running
+          new_string = tag_string[:len(G.nodes) + i] + "1" + tag_string[len(G.nodes) + i + 1:-6] + format(v, '03d') + format(e-1, '03d')
+          # remove path_edges "edge" from c, and any other edges labeled "1" in new_string
+          c = construct_graph(c, G, new_string)
+          if nx.is_connected(c):   
+            sup_graph = max(m_graph, c, key=dmax) # find out if m_graph or c has a longer shortest path (if removing "edge" will increase shortest path length)
+            if sup_graph is c:
+              # if c is better than m_graph, then save new_string as m
+              m, new_string = new_string, m
+              # if c increases the shortest path length, then save c as "m_graph"
+              m_graph, c = c, m_graph
+              # ADDED add newly removed edge to removed_edges.
+              removed_edges[-1] = edge
+              ###
+            # reconfigure c to be G
+            # ??? shouldn't this be run on m because new_string was switched with m?
+            reconstruct_graph(c, G, new_string)
+          else:
+            reconstruct_graph(c, G, new_string)
+        i += 1
+      # run until edge budget decreases to 0
+      e -= 1
+      ### ADDED
+      if removed_edges[-1] == -1:
+        removed_edges.pop()
+      
+      ### ADDED: TEST VERTICES ########
+      print("NEW ITERATION OF TEST REMOVAL OF VERTICES. Remaining e is", e, "net edge budget is", net_edge_budget)
+      print("removed_edges", removed_edges)
+      additional_edge_budget = 0
+      removed_vertices = []
+      removed_edges_copy = copy.deepcopy(removed_edges)
+      # copy of m string and m_graph (the current state of the graph with edge removed)
+      m_string_copy = m
+      m_graph_copy = G.copy()
+      vertex_remove_string = m
+      vertex_test_graph = G.copy()
+      ### find vertex that is an endpoint to the most removed edges. Make sure the start and end vertices are not in it
+      endpoints_of_removed_edges = [i for i, j in removed_edges_copy if (i != 0 and i != end)] + [j for i,j in removed_edges_copy if (j != 0 and j != end)]
+      print("endpoints_of_removed_edges", endpoints_of_removed_edges)
+      ### while our vertex budget remains:
+      for v_i in range(v):
+        ### find vertex that is an endpoint to the most removed edges. Make sure the start and end vertices are not in it
+        # if there are no more removed edge endpoints to check, break loop 
+        if endpoints_of_removed_edges == []:
+          print("endpoints of removed edges empty")
+          break
+        vertex_to_remove = max(endpoints_of_removed_edges, key = endpoints_of_removed_edges.count)
+        # construct string to test the removal of vertex_to_remove
+        vertex_remove_string = vertex_remove_string[:vertex_to_remove] + "1" + vertex_remove_string[vertex_to_remove + 1:-6] + format(v-1, '03d') + format(e, '03d')    
+        # construct new dummy test to test possible vertex removals on
+        vertex_test_graph = construct_graph(vertex_test_graph, G, vertex_remove_string)
+        ### if that vertex can be removed without disconnecting the graph, then save it to removed_vertices. 
+        if nx.is_connected(vertex_test_graph):  
+          print("remove vertex", vertex_to_remove)
+          m_string_copy, vertex_remove_string = vertex_remove_string, m_string_copy
+          m_graph_copy, vertex_test_graph = vertex_test_graph, m_graph_copy
+          removed_vertices.append(vertex_to_remove)
+          ### Add the number of edges that we originally had to remove (but now don't have to due to the vertex removal) back into our edge budget
+          edges_originally_removed = [e for e in removed_edges_copy if ((e[0] == vertex_to_remove) or (e[1] == vertex_to_remove))]
+          removed_edges_copy = [e for e in removed_edges_copy if (e not in edges_originally_removed)]
+          endpoints_of_removed_edges = [i for i, j in removed_edges_copy if (i != 0 and i != end)] + [j for i,j in removed_edges_copy if (j != 0 and j != end)]
+          additional_edge_budget += len(edges_originally_removed)
+          print("edges_originally removed", edges_originally_removed)
+          print("additional edge budget (from removing vertices)", additional_edge_budget)
+          # add back edges/nodes to make c have the same configuration as m (which is now called new_string?).
+          # ??? shouldn't this be run on m because new_string was switched with m?
+          reconstruct_graph(vertex_test_graph, G, vertex_remove_string)
+        else:
+          print("vertex", vertex_to_remove, "cannot be removed without disconnecting graph")
+          reconstruct_graph(vertex_test_graph, G, vertex_remove_string)
+          endpoints_of_removed_edges = [elem for elem in endpoints_of_removed_edges if (elem != vertex_to_remove)]
+        #if m == tag_string: 
+        #  break
+      print("removed_vertices", removed_vertices)
+      print("len(removed_edges)", len(removed_edges))
+      # loop terminates once removing vertices can no longer compensate for extra edge removals
+      helper_additional_edge_budget = additional_edge_budget
+      net_edge_budget = e + helper_additional_edge_budget
+      # If testing all edges along shortest path does not change anything, then break
+      if m == tag_string:
+        break
+    # construct m_graph according to m?
+    reconstruct_graph(m_graph, G, m)
+    m_graph = construct_graph(D, G, m)
+    c = D2
+    return m
+
+  # run helper on number of edges/nodes we can remove, and t, a string of 0s for each node/edge + formatting 
+  res = helper(k, c, t)
+  # Remove edges and nodes from D1 according to res, from running the helper
+  res = construct_graph(D1, G, res)
+  # k = edges removed in res. c = vertices removed in res
+  # ??? I found that the length of k is 557 which is far too large!! Is this because we're not taking into account the edges removed by removing vertices?
+  k = []
+  for edge in G.edges:
+    if edge not in res.edges:
+      k.append(edge)
+  # ADDED
+  print("k", k)
+  print("len(k)", len(k))
+  #
+  c = []
+  for vertex in G.nodes:
+    if vertex not in res.nodes:
+      c.append(vertex)
+  print("len removed edges", len(removed_edges))
+  return res, c, k
